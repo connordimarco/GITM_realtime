@@ -49,9 +49,17 @@ PROFILE=midl_live
 # midl_live aurora placeholder until the M3 aurora decision:
 #   hpi_const  -> 'hpi' auroral model + synthesized constant-HP NOAA HPI file
 #   fta_const  -> 'FTA' auroral model + synthesized constant-AE SME file
-AURORA_MODE=hpi_const
+#   hpi_live   -> 'hpi' + SWPC OVATION hemispheric-power nowcast (5-min,
+#                 per-hemisphere), cache-then-constant fallback (M3 v1,
+#                 2026-07-28)
+AURORA_MODE=hpi_live
 HP_CONST_GW=20.0
 AE_CONST_NT=200.0
+# F107_MODE=live fetches daily F10.7 + 81-day mean from SWPC daily solar
+# indices (6 h cache in $STATE_ROOT/driver_cache); F107/F107A below are
+# the const values AND the fallback if SWPC is unreachable with a cold
+# cache.
+F107_MODE=live
 F107=140.0
 F107A=140.0
 

@@ -24,10 +24,12 @@ tick_once() {
     # Product step: non-fatal, only after a successful segment. Failures
     # land in products.log and never touch the chain.
     if [ "$rc" -eq 0 ] && [ "${GITM_RT_PRODUCTS_ENABLE:-${PRODUCTS_ENABLE:-0}}" = "1" ]; then
-        nice -n "${GITM_RT_NICE:-$NICE}" \
+        flock -n "$STATE_ROOT/products.lock" nice -n "${GITM_RT_NICE:-$NICE}" \
             "${GITM_RT_PRODUCTS_PY:-$PRODUCTS_PY}" "$RT_DIR/products.py" \
             >> "$STATE_ROOT/logs/products.log" 2>&1 || true
     fi
+    # Heartbeat on EVERY tick outcome (the solsticedisk watchdog's signal).
+    python3 "$RT_DIR/heartbeat.py" "$rc" > /dev/null 2>&1 || true
     return "$rc"
 }
 

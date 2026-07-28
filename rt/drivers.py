@@ -168,6 +168,133 @@ def imf_coverage(path):
     return first, last, frontier
 
 
+# ----------------------------------------------- live indices (SWPC) -----
+# Both fetchers are non-fatal by design: network failure falls back to the
+# on-disk cache, and a cold cache falls back to the config constants. A bad
+# SWPC day degrades the science, never the chain.
+
+SWPC_DSD_URL = 'https://services.swpc.noaa.gov/text/daily-solar-indices.txt'
+SWPC_HP_URL = 'https://services.swpc.noaa.gov/text/aurora-nowcast-hemi-power.txt'
+
+
+def _fetch_url(url, timeout_s=10):
+    import urllib.request
+    return urllib.request.urlopen(url, timeout=timeout_s).read().decode(
+        'utf-8', 'replace')
+
+
+def get_live_f107(cache_dir, fallback, fallback_a):
+    """(f107, f107a) from SWPC daily solar indices, as strings for UAM.in.
+
+    Keeps a rolling history in cache (the SWPC file only carries ~30 days;
+    the cache grows toward a true 81-day window over time). Refetches at
+    most every 6 h. Falls back to cached history, then to the config
+    constants.
+    """
+    path = os.path.join(cache_dir, 'f107_history.json')
+    hist = {'fetched_utc': '1970-01-01T00:00:00', 'flux': {}}
+    try:
+        with open(path) as f:
+            hist = json.load(f)
+    except (OSError, ValueError):
+        pass
+    now = datetime.utcnow()
+    fetched = datetime.strptime(hist['fetched_utc'], '%Y-%m-%dT%H:%M:%S')
+    if (now - fetched) > timedelta(hours=6):
+        try:
+            for line in _fetch_url(SWPC_DSD_URL).splitlines():
+                parts = line.split()
+                if len(parts) >= 4 and parts[0].isdigit() and len(parts[0]) == 4:
+                    day = '%s-%s-%s' % (parts[0], parts[1], parts[2])
+                    hist['flux'][day] = float(parts[3])
+            hist['fetched_utc'] = now.strftime('%Y-%m-%dT%H:%M:%S')
+            tmp = path + '.tmp'
+            with open(tmp, 'w') as f:
+                json.dump(hist, f)
+            os.replace(tmp, path)
+        except Exception as e:
+            print('f107 fetch failed (%s); using cache/fallback' % e)
+    days = sorted(d for d, v in hist['flux'].items() if v > 0)
+    if not days:
+        return fallback, fallback_a
+    f107 = hist['flux'][days[-1]]
+    window = [hist['flux'][d] for d in days[-81:]]
+    f107a = sum(window) / len(window)
+    return '%.1f' % f107, '%.1f' % f107a
+
+
+def write_live_hpi(dest, t0, t1, cache_dir, fallback_gw):
+    """rt_hpi.txt from SWPC's OVATION hemispheric-power nowcast (5-min,
+    per-hemisphere). Edge rows are extended flat to cover [t0, t1] (the
+    reader buffers ~1 h; the feed reaches ~now, segments end ≤ frontier).
+    Falls back to a ≤2 h-old cached copy, then to the constant."""
+    raw = None
+    cache = os.path.join(cache_dir, 'hemi_power_last.txt')
+    try:
+        raw = _fetch_url(SWPC_HP_URL)
+        tmp = cache + '.tmp'
+        with open(tmp, 'w') as f:
+            f.write(raw)
+        os.replace(tmp, cache)
+    except Exception as e:
+        try:
+            if (datetime.utcnow() - datetime.utcfromtimestamp(
+                    os.path.getmtime(cache))) < timedelta(hours=2):
+                with open(cache) as f:
+                    raw = f.read()
+                print('hpi fetch failed (%s); using cached copy' % e)
+        except OSError:
+            pass
+    rows = []
+    if raw is not None:
+        for line in raw.splitlines():
+            parts = line.split()
+            if len(parts) == 4 and not line.startswith('#'):
+                try:
+                    t = datetime.strptime(parts[0], '%Y-%m-%d_%H:%M')
+                    rows.append((t, float(parts[2]), float(parts[3])))
+                except ValueError:
+                    continue
+    if not rows:
+        print('hpi: no live data; writing constant %.1f GW' % fallback_gw)
+        write_const_hpi(dest, t0, t1, fallback_gw)
+        return 'const'
+    rows.sort()
+    #
+
+    def clamp(t):
+        if t <= rows[0][0]:
+            return rows[0]
+        if t >= rows[-1][0]:
+            return rows[-1]
+        return None
+    with open(dest, 'w') as f:
+        f.write(':Data_list: ' + os.path.basename(dest) + '\n')
+        f.write(':Created: {0:%a %b %d %H:%M:%S UTC %Y}\n'.format(
+            datetime.utcnow()))
+        f.write('# GITM-RT live hemispheric power from SWPC OVATION '
+                'nowcast (N/S GW).\n')
+        f.write('# 2006-09-05 00:54:25 NOAA-16 (S)  7  29.67   0.82\n')
+        f.write('# F7.2  Normalizing factor\n')
+        f.write('\n')
+        # flat back-extension, real rows in window, flat forward-extension
+        t = t0
+        while t < rows[0][0]:
+            f.write(_HPI_LINE.format(t, 'N', rows[0][1]))
+            f.write(_HPI_LINE.format(t, 'S', rows[0][2]))
+            t += timedelta(seconds=1800)
+        for (t, n, s) in rows:
+            if t0 <= t <= t1:
+                f.write(_HPI_LINE.format(t, 'N', n))
+                f.write(_HPI_LINE.format(t, 'S', s))
+        t = rows[-1][0] + timedelta(seconds=1800)
+        while t <= t1:
+            f.write(_HPI_LINE.format(t, 'N', rows[-1][1]))
+            f.write(_HPI_LINE.format(t, 'S', rows[-1][2]))
+            t += timedelta(seconds=1800)
+    return 'live'
+
+
 # ------------------------------------------------- placeholder aurora ----
 
 _HPI_LINE = '{0:%Y-%m-%d} {0:%H:%M:%S} NOAA-17 ({1})  6{2:7.2f}   0.75\n'
@@ -266,6 +393,9 @@ UA/DataIn/FISM/fismflux_daily_2002.dat		Filename"""
                 'segment ends %s, past the observation frontier %s'
                 % (t_end, frontier))
 
+        cache_dir = os.path.join(cfg['STATE_ROOT'], 'driver_cache')
+        os.makedirs(cache_dir, exist_ok=True)
+
         # Pad the aurora file well past both ends (readers buffer ~1 h).
         pad = timedelta(hours=2)
         aurora_mode = cfg.get('AURORA_MODE', 'hpi_const')
@@ -273,6 +403,14 @@ UA/DataIn/FISM/fismflux_daily_2002.dat		Filename"""
             write_const_hpi(os.path.join(run_dir, 'rt_hpi.txt'),
                             t_start - pad, t_end + pad,
                             float(cfg.get('HP_CONST_GW', 20.0)))
+            model = 'hpi'
+            aurora_lines = """\
+#NOAAHPI_INDICES
+rt_hpi.txt"""
+        elif aurora_mode == 'hpi_live':
+            write_live_hpi(os.path.join(run_dir, 'rt_hpi.txt'),
+                           t_start - pad, t_end + pad, cache_dir,
+                           float(cfg.get('HP_CONST_GW', 20.0)))
             model = 'hpi'
             aurora_lines = """\
 #NOAAHPI_INDICES
@@ -290,6 +428,11 @@ T		convert SME to Hemispheric Power"""
         else:
             raise ValueError('unknown AURORA_MODE: %s' % aurora_mode)
 
+        f107 = cfg.get('F107', '140.0')
+        f107a = cfg.get('F107A', '140.0')
+        if cfg.get('F107_MODE', 'const') == 'live':
+            f107, f107a = get_live_f107(cache_dir, f107, f107a)
+
         lines = """\
 #MHD_INDICES
 rt_imf.dat
@@ -298,8 +441,7 @@ rt_imf.dat
 
 #F107
 %s		f10.7
-%s		f10.7 averaged over 81 days""" % (
-            aurora_lines, cfg.get('F107', '140.0'), cfg.get('F107A', '140.0'))
+%s		f10.7 averaged over 81 days""" % (aurora_lines, f107, f107a)
         return model, lines
 
     raise ValueError('unknown profile: %s' % profile)

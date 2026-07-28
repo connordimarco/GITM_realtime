@@ -113,7 +113,8 @@ def plot_newest(data_dir, out_dir):
     gs = GridSpec(2, 2, figure=fig, height_ratios=[1, 1.15])
 
     axn = fig.add_subplot(gs[0, 0])
-    mn = Basemap(projection="npstere", boundinglat=50, lon_0=sslon + 180.0,
+    mn = Basemap(projection="npstere", boundinglat=50,
+                 lon_0=(sslon + 180.0) % 360.0,
                  resolution="c", round=True, ax=axn)
     xn, yn = mn(*np.meshgrid(lon, lat))
     mn.contourf(xn, yn, z, levels=60, cmap="jet", norm=norm)
@@ -122,7 +123,8 @@ def plot_newest(data_dir, out_dir):
     axn.set_title("North (noon up)", size=10)
 
     axs = fig.add_subplot(gs[0, 1])
-    ms = Basemap(projection="spstere", boundinglat=-50.001, lon_0=sslon + 180.0,
+    ms = Basemap(projection="spstere", boundinglat=-50.001,
+                 lon_0=(sslon + 180.0) % 360.0,
                  resolution="c", round=True, ax=axs)
     xs, ys = ms(*np.meshgrid(lon, lat))
     ms.contourf(xs, ys, z, levels=60, cmap="jet", norm=norm)
@@ -266,8 +268,9 @@ def write_frames(data_dir, frames_dir):
             if datetime.datetime.strptime(n[6:-5], "%Y%m%dT%H%M%S") < cutoff:
                 os.remove(os.path.join(frames_dir, n))
                 names.remove(n)
+    ranges_world, ranges_polar = _window_ranges(frames_dir, names)
     idx = {"cadence_s": 300, "frames": names,
-           "ranges": _window_ranges(frames_dir, names)}
+           "ranges": ranges_world, "ranges_polar": ranges_polar}
     tmp = os.path.join(frames_dir, ".frames.json.tmp")
     with open(tmp, "w") as fh:
         json.dump(idx, fh)
@@ -275,16 +278,24 @@ def write_frames(data_dir, frames_dir):
     return made
 
 
-def _field_ranges(fields):
-    out = {}
+def _field_ranges(fields, lat):
+    """Per-frame extrema, world and polar (|lat| >= 50) separately — the
+    page scales the dials independently of the world map."""
+    prows = [i for i, la in enumerate(lat) if abs(la) >= 50.0]
+
+    def rng(g, rows=None):
+        rs = g if rows is None else [g[i] for i in rows]
+        return [min(min(r) for r in rs), max(max(r) for r in rs)]
+
+    world, polar = {}, {}
     for k, fd in fields.items():
         if fd["alt"]:
-            out[k] = [[min(min(r) for r in g), max(max(r) for r in g)]
-                      for g in fd["data"]]
+            world[k] = [rng(g) for g in fd["data"]]
+            polar[k] = [rng(g, prows) for g in fd["data"]]
         else:
-            g = fd["data"]
-            out[k] = [min(min(r) for r in g), max(max(r) for r in g)]
-    return out
+            world[k] = rng(fd["data"])
+            polar[k] = rng(fd["data"], prows)
+    return {"world": world, "polar": polar}
 
 
 def _window_ranges(frames_dir, names):
@@ -299,10 +310,11 @@ def _window_ranges(frames_dir, names):
     except (OSError, ValueError):
         store = {}
     for n in names:
-        if n not in store:
+        if n not in store or "polar" not in store[n]:
             try:
                 with open(os.path.join(frames_dir, n)) as fh:
-                    store[n] = _field_ranges(json.load(fh)["fields"])
+                    fr = json.load(fh)
+                store[n] = _field_ranges(fr["fields"], fr["lat"])
             except (OSError, ValueError, KeyError):
                 continue
     store = {n: r for n, r in store.items() if n in names}
@@ -311,19 +323,21 @@ def _window_ranges(frames_dir, names):
         json.dump(store, fh)
     os.replace(tmp, store_path)
 
-    agg = {}
-    for r in store.values():
-        for k, v in r.items():
-            if k not in agg:
-                agg[k] = [list(x) for x in v] if isinstance(v[0], list) else list(v)
-            elif isinstance(v[0], list):
-                for i, (lo, hi) in enumerate(v):
-                    agg[k][i][0] = min(agg[k][i][0], lo)
-                    agg[k][i][1] = max(agg[k][i][1], hi)
-            else:
-                agg[k][0] = min(agg[k][0], v[0])
-                agg[k][1] = max(agg[k][1], v[1])
-    return agg
+    def aggregate(region):
+        agg = {}
+        for rec in store.values():
+            for k, v in rec.get(region, {}).items():
+                if k not in agg:
+                    agg[k] = [list(x) for x in v] if isinstance(v[0], list) else list(v)
+                elif isinstance(v[0], list):
+                    for i, (lo, hi) in enumerate(v):
+                        agg[k][i][0] = min(agg[k][i][0], lo)
+                        agg[k][i][1] = max(agg[k][i][1], hi)
+                else:
+                    agg[k][0] = min(agg[k][0], v[0])
+                    agg[k][1] = max(agg[k][1], v[1])
+        return agg
+    return aggregate("world"), aggregate("polar")
 
 
 def mirror_frames(frames_dir, web_dir):
@@ -355,11 +369,15 @@ def main():
         return 0
     merged = merge_pending(data_dir)
     out_dir = os.path.join(state_root, "products")
-    plot_newest(data_dir, out_dir)
     frames_dir = os.path.join(out_dir, "frames")
     made = write_frames(data_dir, frames_dir)
     if made:
         print(f"frames +{len(made)} (latest {made[-1]})")
+    # PNG is secondary: a rendering failure must never stall the frames.
+    try:
+        plot_newest(data_dir, out_dir)
+    except Exception as e:
+        print(f"WARN plot_newest failed: {e}")
 
     # Mirror the latest products into the web working copy (non-fatal).
     web_dir = cfg.get("PRODUCTS_WEB_DIR", "")
