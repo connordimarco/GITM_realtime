@@ -1,0 +1,75 @@
+GITM-RT segment input, rendered by rt/segment.py from rt/templates/UAM.in.rt.
+Physics choices follow srcData/UAM.in (the maintained default).
+
+#DEBUG
+0		debug level (0 = no info, 10 = max info)
+0		cpu to watch
+60.0		dt between normal code output to stdout
+F		usebarriers - forces the code to stop and wait more often
+
+#RESTART
+${RESTART}		Restart Code
+
+start time is only honored on cold starts; restarts take time from restartIN
+
+#TIMESTART
+${START_YEAR}		year
+${START_MONTH}		month
+${START_DAY}		day
+${START_HOUR}		hour
+${START_MINUTE}		minute
+${START_SECOND}		second
+
+#TIMEEND
+${END_YEAR}		year
+${END_MONTH}		month
+${END_DAY}		day
+${END_HOUR}		hour
+${END_MINUTE}		minute
+${END_SECOND}		second
+
+#GRID
+${NBLK_LON}		number of blocks in longitude
+${NBLK_LAT}		number of blocks in latitude
+-90.0		minimum latitude to model
+90.0		maximum latitude to model
+0.0		longitude start to model (set to 0.0 for whole Earth)
+0.0             longitude end to model (set to 0.0 for whole Earth)
+
+DtRestart is large on purpose: the clean-exit restart written by finalize is
+the segment checkpoint; mid-segment restart writes are not wanted.
+
+#SAVEPLOTS
+${DT_RESTART}		dt for writing restart files
+1		how many output files do you want
+3DALL		output style
+${DT_PLOT}		dt for output
+
+#ELECTRODYNAMICS
+${AURORAL_MODEL}
+60.0
+weimer05
+60.0
+
+${DRIVER_LINES}
+
+#DYNAMO
+F		UseDynamo
+45.0		DynamoHighLatBoundary
+500		nItersMax
+1.0		MaxResidual
+F		IncludeCowling
+40.0		LongitudinalAveraging
+F               UseNewTrace
+
+#APEX
+T
+
+#MSISOBC
+T		Shift the [O] density at the lower boundary by 6 months
+0.0		change the obateness of the Earth by this percent (0 = none)
+
+#AUSMSOLVER
+T       	Use AUSM+-up Solvers
+
+#END
