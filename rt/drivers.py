@@ -415,6 +415,19 @@ rt_hpi.txt"""
             aurora_lines = """\
 #NOAAHPI_INDICES
 rt_hpi.txt"""
+        elif aurora_mode == 'ovation':
+            # OVATION Prime inside GITM (ext/Electrodynamics), driven by
+            # the staged IMF via #MHD_INDICES — no aurora driver file at
+            # all, and no SWPC dependency (their HPI is itself OVATION
+            # output collapsed to a scalar). Electron diffuse+mono+wave
+            # on, ion precipitation off pending the Aaron B review.
+            model = 'ovation'
+            aurora_lines = """\
+#AURORATYPES
+T		UseDiffuseAurora
+T		UseMonoAurora
+T		UseWaveAurora
+F		UseIonAurora"""
         elif aurora_mode == 'fta_const':
             write_const_sme(os.path.join(run_dir, 'rt_sme.dat'),
                             t_start - pad, t_end + pad,

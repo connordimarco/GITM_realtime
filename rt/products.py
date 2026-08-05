@@ -185,12 +185,24 @@ def write_frames(data_dir, frames_dir):
     import numpy as np
     from gitm_routines import read_gitm_one_file
 
+    import datetime
+
     os.makedirs(frames_dir, exist_ok=True)
     made = []
-    for f in sorted(os.listdir(data_dir)):
-        if not (f.startswith("3DALL") and f.endswith(".bin")):
-            continue
-        if not f[:-4].endswith("00"):  # skip odd-second segment-start dups
+    bins = [f for f in sorted(os.listdir(data_dir))
+            if f.startswith("3DALL") and f.endswith(".bin")
+            and f[:-4].endswith("00")]  # whole minutes only (odd-second
+                                        # segment-start dups skipped)
+    # Skip bins older than the rolling window: bins outlive frames (2-day
+    # retention vs 24 h window), so rendering them just feeds the prune
+    # below — and after an outage the whole backlog would churn that way
+    # on every pass.
+    cutoff = None
+    if bins:
+        cutoff = (datetime.datetime.strptime(bins[-1][7:-4], "%y%m%d_%H%M%S")
+                  - datetime.timedelta(hours=FRAMES_KEEP_HOURS))
+    for f in bins:
+        if datetime.datetime.strptime(f[7:-4], "%y%m%d_%H%M%S") < cutoff:
             continue
         stamp = f[7:-4].replace("_", "T")  # 260728T052000
         out = os.path.join(frames_dir, f"frame_20{stamp}.json")

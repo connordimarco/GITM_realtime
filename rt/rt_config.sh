@@ -46,13 +46,18 @@ LAG_TARGET_SECONDS=900
 IMF_MANIFEST=/data/Gitm/cdimarco/MIDL_Realtime/realtime_manifest.json
 IMF_PAYLOAD=imf_14re
 PROFILE=midl_live
-# midl_live aurora placeholder until the M3 aurora decision:
+# midl_live aurora modes:
 #   hpi_const  -> 'hpi' auroral model + synthesized constant-HP NOAA HPI file
 #   fta_const  -> 'FTA' auroral model + synthesized constant-AE SME file
 #   hpi_live   -> 'hpi' + SWPC OVATION hemispheric-power nowcast (5-min,
 #                 per-hemisphere), cache-then-constant fallback (M3 v1,
 #                 2026-07-28)
-AURORA_MODE=hpi_live
+#   ovation    -> OVATION Prime in-model (ext/Electrodynamics), driven by
+#                 the staged IMF via #MHD_INDICES — no aurora file, no
+#                 SWPC dependency; full 2D precipitation pattern from the
+#                 MIDL-RT merge (M3 v2, Aaron's recommendation, 2026-08-05;
+#                 probed: 38 s warm 5-min segment, HP ~8 GW quiet).
+AURORA_MODE=ovation
 HP_CONST_GW=20.0
 AE_CONST_NT=200.0
 # F107_MODE=live fetches daily F10.7 + 81-day mean from SWPC daily solar

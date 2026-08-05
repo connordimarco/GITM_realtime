@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
-# M2 driver probe: can GITM initialize + run 1 sim-minute at TODAY's date with
-# the midl_live profile, for each placeholder aurora mode?
+# Driver probe: can GITM initialize + run 1 sim-minute at TODAY's date with
+# the midl_live profile, for each aurora mode given as an argument
+# (default: the two M2 placeholder modes)?
 #
 #   hpi_const  'hpi' auroral model + synthesized constant-HP NOAA HPI file
 #   fta_const  'FTA' auroral model + synthesized constant-AE SME file
+#   hpi_live   'hpi' + SWPC OVATION hemispheric-power nowcast
+#   ovation    OVATION Prime in-model, driven by the staged IMF (no aurora file)
 #
 # Each probe: fresh state root, cold init at (now - 1 h, rounded to :00),
 # one 60 s segment on the live MIDL-RT IMF. Also surfaces any Apex/IGRF
@@ -17,7 +20,10 @@ source "$RT_DIR/rt_config.sh"
 START=$(date -u -d '1 hour ago' +%Y-%m-%dT%H:%M:00)
 FAILED=0
 
-for MODE in hpi_const fta_const; do
+MODES=("${@:-hpi_const fta_const}")
+[ $# -eq 0 ] && MODES=(hpi_const fta_const)
+
+for MODE in "${MODES[@]}"; do
     ROOT="$STATE_ROOT/m2_probe_$MODE"
     rm -rf "$ROOT"
     echo "=== probe $MODE (start $START, state $ROOT)"
