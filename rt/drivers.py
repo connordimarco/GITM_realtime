@@ -438,6 +438,34 @@ F		UseIonAurora"""
 rt_sme.dat	SME Filename
 none		onset time delay file
 T		convert SME to Hemispheric Power"""
+        elif aurora_mode == 'fta_live':
+            # Realtime pseudo-AL/AU: envelope of 13 realtime INTERMAGNET
+            # stations, Kyoto-calibrated, ridge-bridged where the network
+            # loses the nightside oval (rt/sme_live.py; validated vs Kyoto
+            # AL and in a 3-run GITM hindcast, 2026-08-05/06). Fallbacks:
+            # previous rt_sme.dat if it still covers the segment, else the
+            # constant-AE placeholder. Never blocks the chain.
+            import sme_live
+            dest = os.path.join(run_dir, 'rt_sme.dat')
+            try:
+                note = sme_live.build_sme(dest, t_start - pad, t_end + pad,
+                                          cache_dir)
+                print('sme_live: %s' % note)
+            except Exception as e:
+                end = sme_live.coverage_end(dest)
+                if end is not None and end >= t_end + timedelta(minutes=30):
+                    print('sme_live failed (%s); previous file still '
+                          'covers segment' % e)
+                else:
+                    print('sme_live failed (%s); constant-AE fallback' % e)
+                    write_const_sme(dest, t_start - pad, t_end + pad,
+                                    float(cfg.get('AE_CONST_NT', 200.0)))
+            model = 'FTA'
+            aurora_lines = """\
+#SME_INDICES
+rt_sme.dat	SME Filename
+none		onset time delay file
+T		convert SME to Hemispheric Power"""
         else:
             raise ValueError('unknown AURORA_MODE: %s' % aurora_mode)
 

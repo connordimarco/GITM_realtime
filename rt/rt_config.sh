@@ -57,7 +57,15 @@ PROFILE=midl_live
 #                 SWPC dependency; full 2D precipitation pattern from the
 #                 MIDL-RT merge (M3 v2, Aaron's recommendation, 2026-08-05;
 #                 probed: 38 s warm 5-min segment, HP ~8 GW quiet).
-AURORA_MODE=ovation
+#   fta_live   -> 'FTA' + realtime pseudo-AL/AU from 13 INTERMAGNET
+#                 stations, Kyoto-calibrated, ridge-bridged 06-10/19-21 UT
+#                 (rt/sme_live.py + rt/sme_ridge.json; ~2-5 s per tick,
+#                 baseline history in driver_cache/sme_hist.json).
+#                 Fallbacks: previous rt_sme.dat -> constant AE. Validated:
+#                 r~0.8 vs Kyoto AL; FTA(this) vs FTA(true) ~1% high-lat
+#                 TEC in a 3-run hindcast (probed 2026-08-06, FTA init OK,
+#                 21 s cold segment). Flip pending Aaron's OK (mtg ~Aug 10).
+AURORA_MODE=fta_live
 HP_CONST_GW=20.0
 AE_CONST_NT=200.0
 # F107_MODE=live fetches daily F10.7 + 81-day mean from SWPC daily solar
