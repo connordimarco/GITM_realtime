@@ -4,8 +4,9 @@
 #   - 3DALL block fragments in $STATE_ROOT/run/UA/data/
 #   - per-segment logs in $STATE_ROOT/logs/segments/
 # NEVER touches restartIN/, restartOUT/, state.json, harness.log, or the
-# MIDL_Realtime mirror (which prunes itself). Safe to run any time; the
-# tick does not need to be paused (GITM only appends new output).
+# LAUREN/ landing zone (the solsticedisk manages its contents). Safe to
+# run any time; the tick does not need to be paused (GITM only appends
+# new output).
 
 set -u
 RT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

@@ -57,21 +57,27 @@ PROFILE=midl_live
 #                 SWPC dependency; full 2D precipitation pattern from the
 #                 MIDL-RT merge (M3 v2, Aaron's recommendation, 2026-08-05;
 #                 probed: 38 s warm 5-min segment, HP ~8 GW quiet).
-#   fta_live   -> 'FTA' + realtime pseudo-AL/AU from 13 INTERMAGNET
-#                 stations, Kyoto-calibrated, ridge-bridged 06-10/19-21 UT
-#                 (rt/sme_live.py + rt/sme_ridge.json; ~2-5 s per tick,
-#                 baseline history in driver_cache/sme_hist.json).
-#                 Fallbacks: previous rt_sme.dat -> constant AE. Validated:
-#                 r~0.8 vs Kyoto AL; FTA(this) vs FTA(true) ~1% high-lat
-#                 TEC in a 3-run hindcast (probed 2026-08-06, FTA init OK,
-#                 21 s cold segment). Flip pending Aaron's OK (mtg ~Aug 10).
+#   fta_live   -> 'FTA' + realtime AL/AU, best source first (PRODUCTION
+#                 since 2026-08-10):
+#                 1. the LAUREN corrector product pushed from the
+#                    solsticedisk (LAUREN/realtime-aual/aual.dat, nowcast
+#                    + ~1 h forecast), resampled to the 60 s SME grid;
+#                 2. rt/sme_live.py + rt/sme_ridge.json — pseudo-AL/AU
+#                    from 13 INTERMAGNET stations, Kyoto-calibrated,
+#                    ridge-bridged 06-10/19-21 UT (~2-5 s per tick,
+#                    baseline history in driver_cache/sme_hist.json;
+#                    validated 2026-08: r~0.8 vs Kyoto AL, FTA(this) vs
+#                    FTA(true) ~1% high-lat TEC in a 3-run hindcast);
+#                 3. previous rt_sme.dat if it still covers the segment;
+#                 4. constant AE. Never blocks the chain.
 AURORA_MODE=fta_live
 HP_CONST_GW=20.0
 AE_CONST_NT=200.0
-# F107_MODE=live fetches daily F10.7 + 81-day mean from SWPC daily solar
-# indices (6 h cache in $STATE_ROOT/driver_cache); F107/F107A below are
-# the const values AND the fallback if SWPC is unreachable with a cold
-# cache.
+# F107_MODE=live reads daily F10.7 + 81-day mean from the product pushed
+# by the solsticedisk (LAUREN/realtime-f107/f107.json — F107_LOCAL in
+# drivers.py; no SWPC fetch or fallback by design). F107/F107A below are
+# the const values AND the fallback if the product is unreadable or >2
+# days stale.
 F107_MODE=live
 F107=140.0
 F107A=140.0
