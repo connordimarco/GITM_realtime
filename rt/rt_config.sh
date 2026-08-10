@@ -43,7 +43,7 @@ LAG_TARGET_SECONDS=900
 # https://csem.engin.umich.edu/MIDL/realtime/realtime_manifest.json).
 # IMF_PAYLOAD picks the boundary product: imf_14re (bow-shock-nose / OMNI
 # convention — correct for GITM's Weimer driver) or imf_32re.
-IMF_MANIFEST=/data/Gitm/cdimarco/MIDL_Realtime/realtime_manifest.json
+IMF_MANIFEST=/data/Gitm/cdimarco/LAUREN/realtime-midl/realtime_manifest.json
 IMF_PAYLOAD=imf_14re
 PROFILE=midl_live
 # midl_live aurora modes:

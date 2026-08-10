@@ -9,3 +9,6 @@ gate in `drivers.py`).
 `rt_config.sh` is the only file to edit per host.
 `run_m2_probe.sh` is a test.
 `products.py` renders the public products after each segment.
+`sme_live.py` + `sme_ridge.json` build a realtime pseudo-AL/AU driver for
+`AURORA_MODE=fta_live` (built + validated 2026-08 but PARKED — production
+runs `ovation`; see the mode notes in `rt_config.sh` before flipping).

@@ -173,8 +173,19 @@ def imf_coverage(path):
 # on-disk cache, and a cold cache falls back to the config constants. A bad
 # SWPC day degrades the science, never the chain.
 
-SWPC_DSD_URL = 'https://services.swpc.noaa.gov/text/daily-solar-indices.txt'
 SWPC_HP_URL = 'https://services.swpc.noaa.gov/text/aurora-nowcast-hemi-power.txt'
+
+# F10.7 arrives via the solsticedisk push (rrsync-jailed key), refreshed
+# every minute: current flux + precomputed 81-day mean + daily history.
+F107_LOCAL = '/data/Gitm/cdimarco/LAUREN/realtime-f107/f107.json'
+
+# AU/AL corrector product (solsticedisk push, 1-min tick): bare rows
+# 'yr mo dy hr mn sc AU AL' at GeoDGP's native non-uniform 1-4 min
+# cadence, nowcast + ~1 h forecast. gitm_aual.dat is its 60-s resampled
+# GITM-format sibling, overwritten at every staging; aual.dat stays the
+# untouched archive.
+AUAL_LOCAL = '/data/Gitm/cdimarco/LAUREN/realtime-aual/aual.dat'
+AUAL_GITM = '/data/Gitm/cdimarco/LAUREN/realtime-aual/gitm_aual.dat'
 
 
 def _fetch_url(url, timeout_s=10):
@@ -184,43 +195,22 @@ def _fetch_url(url, timeout_s=10):
 
 
 def get_live_f107(cache_dir, fallback, fallback_a):
-    """(f107, f107a) from SWPC daily solar indices, as strings for UAM.in.
+    """(f107, f107a) from the pushed local product, as strings for UAM.in.
 
-    Keeps a rolling history in cache (the SWPC file only carries ~30 days;
-    the cache grows toward a true 81-day window over time). Refetches at
-    most every 6 h. Falls back to cached history, then to the config
-    constants.
+    cache_dir is unused (kept for the call-site signature). Falls back to
+    the config constants only if the product is unreadable or older than
+    2 days (it normally refreshes every minute; f107 itself is daily).
     """
-    path = os.path.join(cache_dir, 'f107_history.json')
-    hist = {'fetched_utc': '1970-01-01T00:00:00', 'flux': {}}
     try:
-        with open(path) as f:
-            hist = json.load(f)
-    except (OSError, ValueError):
-        pass
-    now = datetime.utcnow()
-    fetched = datetime.strptime(hist['fetched_utc'], '%Y-%m-%dT%H:%M:%S')
-    if (now - fetched) > timedelta(hours=6):
-        try:
-            for line in _fetch_url(SWPC_DSD_URL).splitlines():
-                parts = line.split()
-                if len(parts) >= 4 and parts[0].isdigit() and len(parts[0]) == 4:
-                    day = '%s-%s-%s' % (parts[0], parts[1], parts[2])
-                    hist['flux'][day] = float(parts[3])
-            hist['fetched_utc'] = now.strftime('%Y-%m-%dT%H:%M:%S')
-            tmp = path + '.tmp'
-            with open(tmp, 'w') as f:
-                json.dump(hist, f)
-            os.replace(tmp, path)
-        except Exception as e:
-            print('f107 fetch failed (%s); using cache/fallback' % e)
-    days = sorted(d for d, v in hist['flux'].items() if v > 0)
-    if not days:
+        with open(F107_LOCAL) as f:
+            prod = json.load(f)
+        tag = datetime.strptime(prod['time_tag'], '%Y-%m-%dT%H:%M:%S')
+        if datetime.utcnow() - tag > timedelta(days=2):
+            raise ValueError('stale time_tag %s' % prod['time_tag'])
+        return '%.1f' % float(prod['f107']), '%.1f' % float(prod['f107a_last81'])
+    except Exception as e:
+        print('f107 product unusable (%s); using config constants' % e)
         return fallback, fallback_a
-    f107 = hist['flux'][days[-1]]
-    window = [hist['flux'][d] for d in days[-81:]]
-    f107a = sum(window) / len(window)
-    return '%.1f' % f107, '%.1f' % f107a
 
 
 def write_live_hpi(dest, t0, t1, cache_dir, fallback_gw):
@@ -344,6 +334,73 @@ def write_const_sme(dest, t0, t1, ae_nt, cadence_s=60):
             t += timedelta(seconds=cadence_s)
 
 
+def write_corrector_sme(dest, t0, t1, seg_start, seg_end):
+    """SME-format file from the corrector's aual.dat.
+
+    Linearly resamples the non-uniform AU/AL rows onto a 60 s grid over
+    the intersection of the padded write window [t0, t1] with the data
+    span (no extrapolation). Raises if the data does not solidly cover
+    the actual segment [seg_start, seg_end]: first row <= seg_start-10min,
+    last row >= seg_end+3min (the +1 h forecast makes this a freshness
+    check too), and no gap between consecutive rows may exceed 20 min.
+    """
+    rows = []
+    with open(AUAL_LOCAL) as f:
+        for line in f:
+            p = line.split()
+            if len(p) != 8:
+                continue
+            try:
+                t = datetime(int(p[0]), int(p[1]), int(p[2]),
+                             int(p[3]), int(p[4]), int(p[5]))
+                rows.append((t, float(p[6]), float(p[7])))
+            except ValueError:
+                continue
+    if len(rows) < 2:
+        raise RuntimeError('aual.dat: %d usable rows' % len(rows))
+    rows.sort()
+    if rows[0][0] > seg_start - timedelta(minutes=10):
+        raise RuntimeError('aual.dat starts %s, too late for segment %s' %
+                           (rows[0][0], seg_start))
+    if rows[-1][0] < seg_end + timedelta(minutes=3):
+        raise RuntimeError('aual.dat ends %s, stale for segment end %s' %
+                           (rows[-1][0], seg_end))
+    g0 = max(t0, rows[0][0])
+    g0 = g0.replace(second=0) + timedelta(minutes=1) if g0.second else \
+        g0.replace(second=0)
+    g1 = min(t1, rows[-1][0])
+    out = []
+    j = 0
+    t = g0
+    while t <= g1:
+        while rows[j + 1][0] < t:
+            j += 1
+        (ta, aua, ala), (tb, aub, alb) = rows[j], rows[j + 1]
+        if tb - ta > timedelta(minutes=20):
+            raise RuntimeError('aual.dat gap %s..%s' % (ta, tb))
+        w = (t - ta).total_seconds() / (tb - ta).total_seconds()
+        au = aua + w * (aub - aua)
+        al = ala + w * (alb - ala)
+        au = max(au, al + 10.0)          # sme sanity clamp (FTA convention)
+        out.append((t, au, al))
+        t += timedelta(seconds=60)
+    tmp = AUAL_GITM + '.tmp'
+    with open(tmp, 'w') as f:
+        f.write('File created by GITM-RT from the solsticedisk AU/AL '
+                'corrector product (rt/drivers.py write_corrector_sme)\n')
+        f.write('\n')
+        f.write('=' * 60 + '\n')
+        f.write('<year>  <month>  <day>  <hour>  <min>  <sec>  '
+                '<SME (nT)>  <SML (nT)>  <SMU (nT)>\n')
+        for t, au, al in out:
+            f.write('%4d  %02d  %02d  %02d  %02d  %02d  %8.2f %8.2f %8.2f\n'
+                    % (t.year, t.month, t.day, t.hour, t.minute, t.second,
+                       au - al, al, au))
+    os.replace(tmp, AUAL_GITM)
+    shutil.copyfile(AUAL_GITM, dest)
+    return 'rows=%d span=%s..%s' % (len(out), out[0][0], out[-1][0])
+
+
 # -------------------------------------------------------------- profiles --
 
 def stage(profile, cfg, run_dir, t_start, t_end):
@@ -439,27 +496,37 @@ rt_sme.dat	SME Filename
 none		onset time delay file
 T		convert SME to Hemispheric Power"""
         elif aurora_mode == 'fta_live':
-            # Realtime pseudo-AL/AU: envelope of 13 realtime INTERMAGNET
-            # stations, Kyoto-calibrated, ridge-bridged where the network
-            # loses the nightside oval (rt/sme_live.py; validated vs Kyoto
-            # AL and in a 3-run GITM hindcast, 2026-08-05/06). Fallbacks:
-            # previous rt_sme.dat if it still covers the segment, else the
-            # constant-AE placeholder. Never blocks the chain.
+            # Realtime AL/AU, best source first:
+            #   1. the solsticedisk corrector product (GeoDGP grids + ML
+            #      corrector; prospective r(AL)=0.89 vs Kyoto 2023-24),
+            #      resampled to the 60 s grid GITM's SME reader needs;
+            #   2. station-envelope pseudo-AE (rt/sme_live.py; validated
+            #      vs Kyoto AL and in a 3-run GITM hindcast, 2026-08-05/06);
+            #   3. previous rt_sme.dat if it still covers the segment;
+            #   4. the constant-AE placeholder. Never blocks the chain.
             import sme_live
             dest = os.path.join(run_dir, 'rt_sme.dat')
             try:
-                note = sme_live.build_sme(dest, t_start - pad, t_end + pad,
-                                          cache_dir)
-                print('sme_live: %s' % note)
+                note = write_corrector_sme(dest, t_start - pad, t_end + pad,
+                                           t_start, t_end)
+                print('corrector sme: %s' % note)
             except Exception as e:
-                end = sme_live.coverage_end(dest)
-                if end is not None and end >= t_end + timedelta(minutes=30):
-                    print('sme_live failed (%s); previous file still '
-                          'covers segment' % e)
-                else:
-                    print('sme_live failed (%s); constant-AE fallback' % e)
-                    write_const_sme(dest, t_start - pad, t_end + pad,
-                                    float(cfg.get('AE_CONST_NT', 200.0)))
+                print('corrector sme unavailable (%s); sme_live fallback' % e)
+                try:
+                    note = sme_live.build_sme(dest, t_start - pad,
+                                              t_end + pad, cache_dir)
+                    print('sme_live: %s' % note)
+                except Exception as e:
+                    end = sme_live.coverage_end(dest)
+                    if end is not None and \
+                            end >= t_end + timedelta(minutes=30):
+                        print('sme_live failed (%s); previous file still '
+                              'covers segment' % e)
+                    else:
+                        print('sme_live failed (%s); constant-AE fallback'
+                              % e)
+                        write_const_sme(dest, t_start - pad, t_end + pad,
+                                        float(cfg.get('AE_CONST_NT', 200.0)))
             model = 'FTA'
             aurora_lines = """\
 #SME_INDICES
