@@ -9,8 +9,8 @@ under PRODUCTS_PY — the numpy/matplotlib venv, NOT system python3).
   the merged .bin stays and is retention-pruned by prune_state.sh).
 - Skips very fresh headers (mtime < SETTLE_S) so a concurrently-writing
   GITM (catch-up overlap) is never half-read.
-- Renders the newest snapshot to $STATE_ROOT/products/:
-    tec_latest.png (atomic replace) + tec_<UTC>.png + tec_latest.json
+- Writes interactive frames to $STATE_ROOT/products/frames/ and mirrors
+  them into the web working copy.
 
 Config comes from rt/rt_config.sh (KEY=VALUE, env GITM_RT_<KEY> overrides),
 same contract as segment.py.
@@ -66,105 +66,6 @@ def merge_pending(data_dir):
         finally:
             os.chdir(cwd)
     return merged
-
-
-def plot_newest(data_dir, out_dir):
-    import numpy as np
-    import matplotlib
-    matplotlib.use("Agg")
-    import matplotlib.pyplot as plt
-    from gitm_routines import read_gitm_one_file
-
-    bins = sorted(
-        f for f in os.listdir(data_dir)
-        if f.startswith("3DALL") and f.endswith(".bin")
-    )
-    if not bins:
-        print("WAIT no merged snapshots yet")
-        return
-    newest = os.path.join(data_dir, bins[-1])
-
-    from mpl_toolkits.basemap import Basemap
-    from matplotlib.gridspec import GridSpec
-
-    d = read_gitm_one_file(newest, vars_to_read=[0, 1, 2, 34])
-    lon = np.degrees(d[0][2:-2, 2, 2])
-    lat = np.degrees(d[1][2, 2:-2, 2])
-    alt = d[2][2:-2, 2:-2, 2:-2]
-    ne = d[34][2:-2, 2:-2, 2:-2]
-    vtec = np.trapezoid(ne, alt, axis=2) / 1e16  # TECU
-    ut = d["time"]
-    # Wrap one column on each side so contourf closes the 0/360 seam
-    # (otherwise the polar dials show a missing pie slice).
-    z = vtec.T
-    z = np.hstack([z[:, -1:], z, z[:, :1]])
-    lon = np.r_[lon[-1] - 360.0, lon, lon[0] + 360.0]
-
-    # Layout after Connor's original GITM plotter: global Miller panel below,
-    # north/south polar dials above — geographic coordinates rotated so the
-    # sub-solar longitude sits at 12 o'clock (noon up), which lets real
-    # coastlines be drawn on the dials too.
-    norm = plt.Normalize(vmin=0.0, vmax=max(float(vtec.max()) * 1.05, 1.0))
-    sslon = (180.0 - (ut.hour + ut.minute / 60.0) * 15.0) % 360.0
-
-    fig = plt.figure(figsize=(10, 8), dpi=110, tight_layout=True)
-    fig.suptitle(f"GITM Real-Time — Vertical TEC — {ut:%Y-%m-%d %H:%M} UT",
-                 weight="bold", size=14)
-    gs = GridSpec(2, 2, figure=fig, height_ratios=[1, 1.15])
-
-    axn = fig.add_subplot(gs[0, 0])
-    mn = Basemap(projection="npstere", boundinglat=50,
-                 lon_0=(sslon + 180.0) % 360.0,
-                 resolution="c", round=True, ax=axn)
-    xn, yn = mn(*np.meshgrid(lon, lat))
-    mn.contourf(xn, yn, z, levels=60, cmap="jet", norm=norm)
-    mn.drawcoastlines(linewidth=0.4)
-    mn.drawparallels(np.arange(50.0, 90.0, 10.0))
-    axn.set_title("North (noon up)", size=10)
-
-    axs = fig.add_subplot(gs[0, 1])
-    ms = Basemap(projection="spstere", boundinglat=-50.001,
-                 lon_0=(sslon + 180.0) % 360.0,
-                 resolution="c", round=True, ax=axs)
-    xs, ys = ms(*np.meshgrid(lon, lat))
-    ms.contourf(xs, ys, z, levels=60, cmap="jet", norm=norm)
-    ms.drawcoastlines(linewidth=0.4)
-    ms.drawparallels(np.arange(-80.0, -40.0, 10.0))
-    axs.set_title("South (noon up)", size=10)
-
-    axg = fig.add_subplot(gs[1, :])
-    mg = Basemap(projection="mill", llcrnrlon=0, urcrnrlon=360,
-                 llcrnrlat=-80, urcrnrlat=80, resolution="c", ax=axg)
-    xg, yg = mg(*np.meshgrid(lon, lat))
-    cs = mg.contourf(xg, yg, z, levels=60, cmap="jet", norm=norm)
-    mg.drawcoastlines(linewidth=0.5)
-    mg.drawparallels(np.arange(-60.0, 90.0, 30.0), labels=[1, 0, 0, 0])
-    mg.drawmeridians(np.arange(0.0, 360.0, 60.0), labels=[0, 0, 0, 1])
-    decl = -23.44 * np.cos(np.radians(360.0 / 365 * (ut.timetuple().tm_yday + 10)))
-    xss, yss = mg(sslon, decl)
-    axg.plot(xss, yss, "w*", ms=14, mec="k")
-    cbar = mg.colorbar(cs, location="right", pad="2%")
-    cbar.set_label("Vertical TEC [TECU]")
-
-    os.makedirs(out_dir, exist_ok=True)
-    stamped = os.path.join(out_dir, f"tec_{ut:%Y%m%dT%H%M}.png")
-    fig.savefig(stamped)
-    plt.close(fig)
-    tmp = os.path.join(out_dir, ".tec_latest.png.tmp")
-    with open(stamped, "rb") as src, open(tmp, "wb") as dst:
-        dst.write(src.read())
-    os.replace(tmp, os.path.join(out_dir, "tec_latest.png"))  # atomic
-
-    meta = {"time_utc": ut.strftime("%Y-%m-%dT%H:%M:%S"),
-            "vtec_min": round(float(vtec.min()), 2),
-            "vtec_max": round(float(vtec.max()), 2),
-            "vtec_mean": round(float(vtec.mean()), 2),
-            "file": os.path.basename(stamped)}
-    tmpj = os.path.join(out_dir, ".tec_latest.json.tmp")
-    with open(tmpj, "w") as f:
-        json.dump(meta, f)
-    os.replace(tmpj, os.path.join(out_dir, "tec_latest.json"))
-    print(f"OK {ut:%Y-%m-%dT%H:%M} vtec {meta['vtec_min']}-{meta['vtec_max']} TECU -> {stamped}")
 
 
 def _sig(v):
@@ -385,23 +286,10 @@ def main():
     made = write_frames(data_dir, frames_dir)
     if made:
         print(f"frames +{len(made)} (latest {made[-1]})")
-    # PNG is secondary: a rendering failure must never stall the frames.
-    try:
-        plot_newest(data_dir, out_dir)
-    except Exception as e:
-        print(f"WARN plot_newest failed: {e}")
 
-    # Mirror the latest products into the web working copy (non-fatal).
+    # Mirror the frames into the web working copy (non-fatal).
     web_dir = cfg.get("PRODUCTS_WEB_DIR", "")
     if web_dir and os.path.isdir(web_dir):
-        for name in ("tec_latest.png", "tec_latest.json"):
-            src = os.path.join(out_dir, name)
-            if not os.path.exists(src):
-                continue
-            tmp = os.path.join(web_dir, "." + name + ".tmp")
-            with open(src, "rb") as s, open(tmp, "wb") as t:
-                t.write(s.read())
-            os.replace(tmp, os.path.join(web_dir, name))
         mirror_frames(frames_dir, web_dir)
     print(f"done merged={len(merged)} wall={time.time() - t0:.1f}s")
     return 0

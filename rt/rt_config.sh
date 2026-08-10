@@ -87,9 +87,9 @@ DT_PLOT=300.0
 # NOT system python3 (its numpy is broken on SWORD).
 PRODUCTS_ENABLE=1
 PRODUCTS_PY=/data/Gitm/cdimarco/venv/bin/python
-# If set and the directory exists, products.py also copies tec_latest.*
-# there (atomic) — the SWORD-Web working copy's live-data dir. How these
-# files reach the public web host is the open M4 publishing question.
+# If set and the directory exists, products.py mirrors the interactive
+# frames there (atomic) — the SWORD-Web working copy's live-data dir,
+# pulled from there by the solsticedisk for web publishing.
 PRODUCTS_WEB_DIR=/data/Gitm/cdimarco/SWORD-Web/data/gitm
 
 # Retention: rt/prune_state.sh (daily midnight cron) deletes accumulated
