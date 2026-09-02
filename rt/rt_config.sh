@@ -15,15 +15,21 @@ PY=/usr/bin/python3
 TMPDIR_OVERRIDE=/data/Gitm/cdimarco/tmp
 
 # Resources (shared-box courtesy: nice everything, modest ranks)
-NRANKS=8
+NRANKS=16
 NICE=10
 
-# Grid: blocks of 9x9x50 cells (compiled Config.pl -g=9,9,50,4).
+# Grid: blocks of 18x18x50 cells, one block per rank (compiled
+# Config.pl -g=18,18,50,1 on 2026-09-02 after Aaron B: Earth needs
+# nBlocksMax=1). 2x8 blocks = 36x144 cells = 10 deg lon x 1.25 deg lat
+# on 16 ranks. Same binary serves 10x2.5 (2x4, 8 ranks), 5x2.5 (4x4, 16)
+# and 5x1.25 (4x8, 32). Constraint: NBLK_LON*NBLK_LAT == NRANKS.
+# Previous (2026-07-28 to 09-02): 9x9x50 blocks, nBlocksMax=4, 4x8 on 8
+# ranks = 10x2.5 deg. Notes below are from that era:
 # 4x8 blocks = 36x72 cells = 10 deg lon x 2.5 deg lat (SWORD PoC choice,
 # 2026-07-28: ~14% duty at 8 ranks; 10x1.25 also fits 8 ranks at ~37%
 # duty but needs a -g=9,9,50,8 rebuild — noted as the upgrade path).
 # Constraint: NBLK_LON*NBLK_LAT <= 4*NRANKS.
-NBLK_LON=4
+NBLK_LON=2
 NBLK_LAT=8
 
 # Segment loop
@@ -32,8 +38,8 @@ NBLK_LAT=8
 # 60 s). Lag behind wall clock is therefore an outcome — feed latency
 # (~2-7 min) plus up to one 5-min segment quantum — not a control.
 # LAG_TARGET_SECONDS is only the status/watchdog alert threshold.
-SEGMENT_SECONDS=300
-LAG_TARGET_SECONDS=900
+SEGMENT_SECONDS=600
+LAG_TARGET_SECONDS=1500
 
 # Drivers
 # The IMF is resolved through MIDL-RT's manifest -> generation-stamped

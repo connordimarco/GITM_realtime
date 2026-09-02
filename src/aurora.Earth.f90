@@ -514,11 +514,6 @@ subroutine initialize_fang_arrays
   use ModInputs
   use ModSources
 
-  ! The IsFirstTime flag in aurora is per-block, but these arrays are
-  ! global: with >1 block per processor the second block re-enters here
-  ! and the allocate of an already-allocated array kills the run.
-  if (allocated(Fang_Ci)) return
-
   allocate(Fang_Ci(ED_N_Energies, 8), stat=iErr)
   allocate(Fang_y(ED_N_Energies, nAlts), stat=iErr)
   allocate(Fang_f(ED_N_Energies, nAlts), stat=iErr)

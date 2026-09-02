@@ -54,7 +54,7 @@ weimer05
 ${DRIVER_LINES}
 
 #DYNAMO
-F		UseDynamo
+T		UseDynamo
 45.0		DynamoHighLatBoundary
 500		nItersMax
 1.0		MaxResidual
