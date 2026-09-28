@@ -168,6 +168,59 @@ def imf_coverage(path):
     return first, last, frontier
 
 
+def imf_largest_gap(path, t0, t1, pad_s=1800):
+    """Largest gap (seconds) between consecutive IMF rows relevant to a
+    segment [t0, t1], mirroring what GITM will actually see.
+
+    GITM (standalone, src/read_MHDIMF_Indices_new.f90) keeps only rows in
+    [StartTime - 1800 s, EndTime + 1800 s] and then aborts in
+    check_all_indices if StartTime is more than 5 file-cadences past the
+    last kept row ("Error in index file times, after end ... Issue with
+    Indices!"). MIDL-RT omits any row with a missing variable, so an L1
+    plasma dropout becomes a hole in the file that imf_coverage() cannot
+    see (first/last/frontier all look fine). 2026-09-22: a ~4 h hole let
+    the 12:00 segment through; GITM aborted every minute for 26 h.
+
+    The gap is measured over the rows in the padded window plus the last
+    row before it and the first row after it, so a hole that merely
+    brackets the window counts too. Returns (gap_seconds, gap_start,
+    gap_end); gap_seconds is 0 if fewer than two rows qualify (the
+    coverage gate has already rejected those cases).
+    """
+    lo = t0 - timedelta(seconds=pad_s)
+    hi = t1 + timedelta(seconds=pad_s)
+    prev = None
+    times = []
+    started = False
+    with open(path) as f:
+        for line in f:
+            if not started:
+                if line.startswith('#START'):
+                    started = True
+                continue
+            parts = line.split()
+            if len(parts) < 7:
+                continue
+            try:
+                t = datetime(*[int(x) for x in parts[:6]])
+            except ValueError:
+                continue
+            if t < lo:
+                prev = t
+                continue
+            if not times and prev is not None:
+                times.append(prev)
+            times.append(t)
+            if t > hi:
+                break
+    worst = (0.0, None, None)
+    for a, b in zip(times, times[1:]):
+        g = (b - a).total_seconds()
+        if g > worst[0]:
+            worst = (g, a, b)
+    return worst
+
+
 # ----------------------------------------------- live indices (SWPC) -----
 # Both fetchers are non-fatal by design: network failure falls back to the
 # on-disk cache, and a cold cache falls back to the config constants. A bad
@@ -449,6 +502,19 @@ UA/DataIn/FISM/fismflux_daily_2002.dat		Filename"""
             raise WaitingForData(
                 'segment ends %s, past the observation frontier %s'
                 % (t_end, frontier))
+        # Hole gate: a row gap GITM would abort on (or silently flat-fill
+        # across) is WAIT, never a launch. MIDL-RT does backfill rows as
+        # sources settle, so waiting is often enough; if the hole never
+        # fills, the head eventually drops out of the IMF window ("window
+        # too old" above) and the chain needs a manual cold re-init past
+        # the hole (segment.py init --start ... --force).
+        max_gap = float(cfg.get('IMF_MAX_GAP_SECONDS', 900))
+        gap, ga, gb = imf_largest_gap(imf_dest, t_start, t_end)
+        if gap > max_gap:
+            raise WaitingForData(
+                'IMF hole %s..%s (%.0f min) near segment %s..%s exceeds '
+                'IMF_MAX_GAP_SECONDS=%.0f'
+                % (ga, gb, gap / 60.0, t_start, t_end, max_gap))
 
         cache_dir = os.path.join(cfg['STATE_ROOT'], 'driver_cache')
         os.makedirs(cache_dir, exist_ok=True)
@@ -551,5 +617,65 @@ rt_imf.dat
 %s		f10.7
 %s		f10.7 averaged over 81 days""" % (aurora_lines, f107, f107a)
         return model, lines
+
+    if profile == 'replay':
+        # Historical replay of the realtime chain (verify_mar2015, Aaron
+        # B's restart-drift study): fixed driver files, no live feeds, no
+        # observation frontier. The F10.7 path is the realtime one on
+        # purpose — per-segment #F107 constants (daily f107 + TRAILING
+        # 81-day mean) from a 'YYYY-MM-DD f107 f107a' table. Configured by
+        # env only (these keys are not in rt_config.sh, so load_config's
+        # GITM_RT_* override does not see them):
+        #   GITM_RT_REPLAY_IMF    SWMF IMF file (MIDL 14 Re, whole span)
+        #   GITM_RT_REPLAY_SME    GITM #SME_INDICES file (LAUREN or Kyoto)
+        #   GITM_RT_REPLAY_F107   the daily table
+        #   GITM_RT_REPLAY_END    last segment end, YYYY-MM-DDTHH:MM:SS
+        env = os.environ
+        end = datetime.strptime(env['GITM_RT_REPLAY_END'], '%Y-%m-%dT%H:%M:%S')
+        if t_end > end:
+            raise WaitingForData('replay complete: segment ends %s, past '
+                                 'REPLAY_END %s' % (t_end, end))
+
+        def stage_once(src, dest):
+            if (not os.path.exists(dest)
+                    or os.path.getsize(dest) != os.path.getsize(src)):
+                shutil.copyfile(src, dest + '.tmp')
+                os.replace(dest + '.tmp', dest)
+        imf_dest = os.path.join(run_dir, 'rt_imf.dat')
+        stage_once(env['GITM_RT_REPLAY_IMF'], imf_dest)
+        first, last, _ = imf_coverage(imf_dest)
+        if last is None or last < t_end or first > t_start:
+            raise WaitingForData('replay IMF covers %s..%s, segment %s..%s'
+                                 % (first, last, t_start, t_end))
+        max_gap = float(cfg.get('IMF_MAX_GAP_SECONDS', 900))
+        gap, ga, gb = imf_largest_gap(imf_dest, t_start, t_end)
+        if gap > max_gap:
+            raise WaitingForData('replay IMF hole %s..%s (%.0f min)'
+                                 % (ga, gb, gap / 60.0))
+        stage_once(env['GITM_RT_REPLAY_SME'], os.path.join(run_dir, 'rt_sme.dat'))
+
+        f107 = f107a = None
+        with open(env['GITM_RT_REPLAY_F107']) as f:
+            for line in f:
+                p = line.split()
+                if len(p) >= 3 and p[0] == t_start.strftime('%Y-%m-%d'):
+                    f107, f107a = '%.1f' % float(p[1]), '%.1f' % float(p[2])
+                    break
+        if f107 is None:
+            raise ValueError('no F10.7 table row for %s' % t_start.date())
+
+        lines = """\
+#MHD_INDICES
+rt_imf.dat
+
+#SME_INDICES
+rt_sme.dat	SME Filename
+none		onset time delay file
+T		convert SME to Hemispheric Power
+
+#F107
+%s		f10.7
+%s		f10.7 averaged over 81 days""" % (f107, f107a)
+        return 'FTA', lines
 
     raise ValueError('unknown profile: %s' % profile)

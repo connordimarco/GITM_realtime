@@ -110,6 +110,12 @@ def cmd_init(cfg, args):
         os.symlink(os.path.join('UA', 'restartIN'), top_rin)
 
     start = datetime.strptime(args.start, TIME_FMT)
+    # A re-init is the operator recovering from a FAIL streak: drop the
+    # tick's backoff counter so the first cold segment launches at once.
+    try:
+        os.unlink(os.path.join(cfg['STATE_ROOT'], 'fail_count'))
+    except OSError:
+        pass
     save_state(paths, {
         'head_utc': start.strftime(TIME_FMT),
         'mode': 'cold',

@@ -30,8 +30,17 @@ fi
 
 n_logs=0
 if [ -d "$STATE_ROOT/logs/segments" ]; then
+    # Always keep the newest runlog and log regardless of age: when the
+    # chain is stuck (FAIL streak, then a permanent WAIT once the head
+    # drops out of the IMF window) they are the only evidence of why, and
+    # the 09-03 outage lost exactly that to this prune.
+    keep_args=()
+    for k in $(ls -t "$STATE_ROOT/logs/segments"/*.runlog 2>/dev/null | head -1) \
+             $(ls -t "$STATE_ROOT/logs/segments"/log_*.dat 2>/dev/null | head -1); do
+        keep_args+=( ! -name "$(basename "$k")" )
+    done
     n_logs=$(find "$STATE_ROOT/logs/segments" -type f -mtime +"$DAYS" \
-        -print -delete | wc -l)
+        "${keep_args[@]}" -print -delete | wc -l)
 fi
 
 echo "$(stamp) OK pruned files_data=$n_data files_seglogs=$n_logs (older than ${DAYS}d) $(du -sh "$STATE_ROOT/run/UA/data" 2>/dev/null | cut -f1) remain"

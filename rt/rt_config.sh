@@ -51,6 +51,12 @@ LAG_TARGET_SECONDS=1500
 # convention — correct for GITM's Weimer driver) or imf_32re.
 IMF_MANIFEST=/data/Gitm/cdimarco/LAUREN/realtime-midl/realtime_manifest.json
 IMF_PAYLOAD=imf_14re
+# Largest tolerated gap between consecutive IMF rows within +-30 min of a
+# segment (GITM's own reader window). MIDL-RT drops rows with any missing
+# variable, so an L1 plasma dropout is a hole; GITM aborts on a hole
+# > 5 cadences before the segment start and flat-fills across larger ones
+# otherwise. Above this the segment WAITs (2026-09-22 outage: 4 h hole).
+IMF_MAX_GAP_SECONDS=900
 PROFILE=midl_live
 # midl_live aurora modes:
 #   hpi_const  -> 'hpi' auroral model + synthesized constant-HP NOAA HPI file
